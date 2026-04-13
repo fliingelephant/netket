@@ -109,6 +109,23 @@ def test_project_preserves_sharding():
 @pytest.mark.skipif(
     not nk.config.netket_experimental_sharding, reason="Only run with sharding"
 )
+def test_sampling_warns_if_sampler_state_sigma_is_replicated():
+    vs, *_ = _setup(8)
+
+    # Simulate a buggy transformation that preserves the shape of sigma but drops
+    # its sharding metadata.
+    broken_sigma = nk.jax.sharding.gather(vs.sampler_state.σ)
+    vs.sampler_state = vs.sampler_state.replace(σ=broken_sigma)
+
+    with pytest.warns(UserWarning) as record:
+        vs.sample(chain_length=1)
+
+    assert any("state.σ" in str(w.message) for w in record)
+
+
+@pytest.mark.skipif(
+    not nk.config.netket_experimental_sharding, reason="Only run with sharding"
+)
 def test_expect():
     vs, _, ha = _setup(16)
     E = vs.expect(ha)
