@@ -24,11 +24,16 @@
 * Added {class}`netket.operator.EmbedOperator`, which embeds an operator acting on a subspace into a larger {class}`~netket.hilbert.TensorHilbert` space.
   This represents $\hat{O}_\text{embed} = \mathbb{I}_0 \otimes \cdots \otimes \hat{O}_i \otimes \cdots \otimes \mathbb{I}_N$ and is useful for constructing operators on composite systems such as coupled electron-phonon models.
 * Added {meth}`netket.operator.FermionOperator2nd.collect`, which automatically converts a generic fermionic operator to a more efficient particle-number-conserving implementation when possible.
+* Added {class}`netket.operator.SpinFlipOperator` to represent global spin-flip symmetry actions on spin and spinful fermionic Hilbert spaces [commit 09b2db972](https://github.com/netket/netket/commit/09b2db9728c2dfcf81e0c0f47aaf22c194131f23).
 
 #### Graphs
 * Added {meth}`netket.graph.Lattice.distances_euclidean`, which returns the pairwise Euclidean distances between lattice sites and optionally applies the minimum-image convention along periodic directions.
+* {meth}`netket.graph.Lattice.translation_group` now accepts `strides=` to construct translation subgroups directly [commit 0b4617ef8](https://github.com/netket/netket/commit/0b4617ef81c02dfd62bc38f9575fbec067465f73).
 
 #### Symmetries
+* Added {func}`netket.symmetry.group.cyclic_group`, a convenience constructor for cyclic permutation groups [commit 68476ce71](https://github.com/netket/netket/commit/68476ce71493efd6730fe74c1a59cb0434eb5646).
+* Added {func}`netket.symmetry.spin_flip_representation` to build spin-flip symmetry projectors with even/odd parity sectors [commit 09b2db972](https://github.com/netket/netket/commit/09b2db9728c2dfcf81e0c0f47aaf22c194131f23).
+* Exposed public {class}`netket.symmetry.LabeledRepresentation` and {class}`netket.symmetry.TranslationRepresentation` classes, with momentum-labelled projectors for translation groups [commit 450d1bc8f](https://github.com/netket/netket/commit/450d1bc8fe60a34a007dc798120bdfdf40bfe2bd).
 * Added `LabeledRepresentationCosetFilter` and `TranslationCosetFilter`, two coset refinement operators for iterative symmetrization.
   Given a group G with subgroup H, the coset filter F_C(ρ) promotes a state already projected onto the H-symmetric sector to the full G-symmetric sector using only `|G|/|H|` operator terms instead of `|G|`, enabling the iterative symmetrization workflow `P_G(ρ) = F_C(ρ) @ P_H(ρ|_H)`.
   Obtained via {meth}`~netket._src.symmetry.labeled_representation.LabeledRepresentation.coset_filter` and {meth}`~netket._src.symmetry.translation_representation.TranslationRepresentation.coset_filter`.
@@ -59,6 +64,7 @@
   Files are saved as `{root}_{step:05d}.nk` and can be reloaded with `nqxpack.load(path)`.
 * Added {meth}`netket.logging.RuntimeLog.deserialize`, a classmethod to load a previously serialized `RuntimeLog` from a `.json`/`.log` file.
 * {class}`netket.logging.JsonLog` now supports `mode="append"`, which loads existing log data and continues logging from the last recorded step, making it easier to resume a run from an existing log file.
+* {meth}`netket.utils.history.HistoryDict.from_file` now correctly loads JSON logs containing `NaN` values serialized as `null` [PR #2220](https://github.com/netket/netket/pull/2220), [commit 66fa14c0f](https://github.com/netket/netket/commit/66fa14c0f7860d38fe7a363c543c81ac97f9bcc4).
 * Drivers now log a `wallclock` timestamp at every step.
 
 ### Breaking Changes
@@ -81,12 +87,15 @@
 * Fixed a bug where constructing a {class}`netket.operator.PauliStringsJax` with zero terms would crash. Empty operators now correctly return zero-sized connected elements.
 * Fixed a bug in chunked expectations for {class}`netket.operator.ContinuousOperator`. Apparently nobody had been using that code path, or this would have been found much sooner.
 * Fixed a bug in sharded, chunked expectation computations for fermionic operators.
+* Fixed a bug in {meth}`netket.graph.space_group.TranslationGroup.momentum_irrep` on 1D lattices [commit 4fbc95712](https://github.com/netket/netket/commit/4fbc9571270596408f8ab7ce2ba777255cbea403), and improved the diagnostic for invalid lattice wave vectors [commit bd07d5544](https://github.com/netket/netket/commit/bd07d55442e775448c12a55527eb4d78a275b084).
 * Fixed an edge case in complex `operator @ state` computations with sharding and chunking triggered by newer JAX versions [PR #2206](https://github.com/netket/netket/pull/2206).
 * Fixed a bug in {class}`netket.experimental.logging.HDF5Log` where `save_params=False` was ignored and parameters were still saved [PR #2189](https://github.com/netket/netket/pull/2189).
+* Fixed a sharded chunking crash when nesting {func}`netket.vqs.apply_operator` with particle-number-conserving fermionic operators [commit 348a236b2](https://github.com/netket/netket/commit/348a236b22e33e1713bcb1ecc8a273e1d9174a32).
 * Fixed a bug in fermionic symmetry representation construction for groups containing duplicate elements.
 * Fixed several bugs in the experimental Runge-Kutta tableaus used by dynamics drivers: `RK23` had the embedded 3rd- and 2nd-order rows swapped, and `RK45Fehlberg` had incorrect coefficients.
   Those bugs had apparently been sitting there unnoticed for quite a while.
 * The `Midpoint` and `Heun` tableaus now expose consistent embedded lower-order formulas [PR #2210](https://github.com/netket/netket/pull/2210).
+* Calling {meth}`netket.vqs.MCMixedState.expect_and_grad` with a physical operator now raises a dedicated error with guidance on defining a custom dispatch rule [commit e4fc4a965](https://github.com/netket/netket/commit/e4fc4a96575b6bd61a723e76f677148def50e9b8).
 
 ## NetKet 3.21
 
