@@ -107,7 +107,8 @@ def test_project_preserves_sharding():
 
 
 @pytest.mark.skipif(
-    not nk.config.netket_experimental_sharding, reason="Only run with sharding"
+    not nk.config.netket_experimental_sharding or jax.device_count() <= 1,
+    reason="Only run with sharding on multiple devices",
 )
 def test_sampling_warns_if_sampler_state_sigma_is_replicated():
     vs, *_ = _setup(8)
