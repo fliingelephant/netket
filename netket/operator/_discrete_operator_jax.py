@@ -218,7 +218,7 @@ class DiscreteJaxOperator(DiscreteOperator[DiscreteHilbertType]):
         """
 
         _, mels = self.get_conn_padded(x)
-        nonzeros = jnp.abs(x) > 0
+        nonzeros = jnp.abs(mels) > 0
         _n_conn = nonzeros.sum(axis=-1)
 
         if out is None:

@@ -735,3 +735,23 @@ def test_operator_jax_n_conn(op):
     assert np.less_equal(n_conn_j, n_conn).all()
     # FIXME: uncomment once the numba implementation is fixed
     # np.testing.assert_equal(n_conn_j, n_conn)
+    # The numba operators can report 1 extra connection when the diagonal matrix
+    # element is zero (they include it anyway), so exact equality does not always hold.
+
+
+@pytest.mark.parametrize(
+    "op",
+    [
+        pytest.param(op, id=name)
+        for name, op in op_finite_size.items()
+        if isinstance(op, DiscreteJaxOperator)
+    ],
+)
+def test_jax_operator_n_conn_equals_nonzero_mels(op):
+    states = op.hilbert.all_states()
+    _, mels = op.get_conn_padded(states)
+
+    n_conn_expected = np.asarray(jnp.sum(jnp.abs(mels) > 0, axis=-1))
+    n_conn_actual = np.asarray(op.n_conn(states))
+
+    np.testing.assert_array_equal(n_conn_actual, n_conn_expected)
