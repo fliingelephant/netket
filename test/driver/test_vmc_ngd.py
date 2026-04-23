@@ -185,7 +185,11 @@ def test_advd_vs_nk_vmc(model, use_ntk, onthefly):
 @pytest.mark.parametrize(
     "momentum", [pytest.param(None, id=""), pytest.param(0.5, id="momentum")]
 )
-def test_SRt_vs_SR(model, onthefly, momentum):
+@pytest.mark.parametrize(
+    "moment_adaptive",
+    [pytest.param(False, id=""), pytest.param(True, id="march")],
+)
+def test_SRt_vs_SR(model, onthefly, momentum, moment_adaptive):
     """
     nk.driver.VMC_kernelSR must give **exactly** the same dynamics as nk.driver.VMC with nk.optimizer.SR
     """
@@ -199,6 +203,7 @@ def test_SRt_vs_SR(model, onthefly, momentum):
         variational_state=vstate_srt,
         diag_shift=0.1,
         momentum=momentum,
+        moment_adaptive=moment_adaptive,
         use_ntk=True,
         on_the_fly=onthefly,
     )
@@ -212,6 +217,7 @@ def test_SRt_vs_SR(model, onthefly, momentum):
         variational_state=vstate_sr,
         diag_shift=0.1,
         momentum=momentum,
+        moment_adaptive=moment_adaptive,
         use_ntk=False,
         on_the_fly=False,
     )
@@ -340,8 +346,12 @@ def test_SRt_supports_netket_solvers(use_ntk):
 @pytest.mark.parametrize(
     "momentum", [pytest.param(None, id=""), pytest.param(0.9, id="momentum")]
 )
+@pytest.mark.parametrize(
+    "moment_adaptive",
+    [pytest.param(False, id=""), pytest.param(True, id="march")],
+)
 @pytest.mark.parametrize("model", machines)
-def test_srt_vs_ntk(model, momentum):
+def test_srt_vs_ntk(model, momentum, moment_adaptive):
     """
     All nk.driver.VMC_kernelSR must give **exactly** the same dynamics even with momentum
     """
@@ -355,6 +365,7 @@ def test_srt_vs_ntk(model, momentum):
         diag_shift=0.1,
         proj_reg=1.0,
         momentum=momentum,
+        moment_adaptive=moment_adaptive,
         on_the_fly=False,
         use_ntk=True,
     )
@@ -366,6 +377,7 @@ def test_srt_vs_ntk(model, momentum):
         diag_shift=0.1,
         proj_reg=1.0,
         momentum=momentum,
+        moment_adaptive=moment_adaptive,
         on_the_fly=False,
         use_ntk=True,
     )

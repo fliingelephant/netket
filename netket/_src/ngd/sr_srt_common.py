@@ -99,6 +99,7 @@ def _prepare_input(
         "mode",
         "chunk_size",
         "use_ntk",
+        "moment_adaptive",
     ),
 )
 def _sr_srt_common(
@@ -114,6 +115,10 @@ def _sr_srt_common(
     proj_reg: float | Array | None = None,
     momentum: float | Array | None = None,
     old_updates: PyTree | None = None,
+    moment_adaptive: bool = False,
+    beta: float | Array = 0.995,
+    v: Array | None = None,
+    prev_updates: Array | None = None,
     chunk_size: int | None = None,
     use_ntk: bool = False,
     weights: Array | None = None,
@@ -132,12 +137,15 @@ def _sr_srt_common(
         diag_shift: The diagonal shift of the stochastic reconfiguration matrix. Typical values are 1e-4 ÷ 1e-3. Can also be an optax schedule.
         proj_reg: Weight before the matrix `1/N_samples \\bm{1} \\bm{1}^T` used to regularize the linear solver in SPRING.
         momentum: Momentum used to accumulate updates in SPRING.
+        moment_adaptive: If True, enable the MARCH optimizer (Gu et al. 2025) on top of SPRING,
+            which adaptively re-weights the SR ridge per-parameter using an EMA of squared iterate differences.
+        beta: EMA decay for the MARCH second-moment estimator. Ignored if ``moment_adaptive=False``.
         linear_solver: Callable to solve the linear problem associated to the updates of the parameters.
         mode: The mode used to compute the jacobian of the variational state. Can be `'real'` or `'complex'` (defaults to the dtype of the output of the model).
         weights: Importance sampling weights for the samples. If `None`, uniform weights are assumed.
 
     Returns:
-        The new parameters, the old updates, and the info dictionary.
+        The new parameters, the old updates, v, prev_updates, and the info dictionary.
     """
     if use_ntk and weights is not None:
         raise NotImplementedError(
@@ -165,15 +173,25 @@ def _sr_srt_common(
 
     O_L, dv = _prepare_input(jacobians, local_grad, mode=mode, scaling_factor=mass)
 
+    n_params_flat = jacobians.shape[-1]
     if old_updates is None and momentum is not None:
-        old_updates = jnp.zeros(jacobians.shape[-1], dtype=jacobians.dtype)
+        old_updates = jnp.zeros(n_params_flat, dtype=jacobians.dtype)
+
+    # MARCH state init: v₀ = ones (isotropic first step → reduces to SPRING),
+    # prev_updates₀ = zeros. Lives in the real-valued flat space used by the solve
+    # (shape (2N,) for complex params, (N,) for real params — matches old_updates).
+    if moment_adaptive:
+        if v is None:
+            v = jnp.ones(n_params_flat, dtype=jacobians.real.dtype)
+        if prev_updates is None:
+            prev_updates = jnp.zeros(n_params_flat, dtype=jacobians.dtype)
 
     compute_update = _compute_srt_update if use_ntk else _compute_sr_update
 
     # TODO: Add support for proj_reg and momentum
     # At the moment SR does not support momentum, proj_reg.
     # We raise an error if they are passed with a value different from None.
-    updates, old_updates, info = compute_update(
+    updates, old_updates, v, prev_updates, info = compute_update(
         O_L,
         dv,
         diag_shift=diag_shift,
@@ -182,10 +200,14 @@ def _sr_srt_common(
         proj_reg=proj_reg,
         momentum=momentum,
         old_updates=old_updates,
+        moment_adaptive=moment_adaptive,
+        beta=beta,
+        v=v,
+        prev_updates=prev_updates,
         params_structure=_params_structure,
     )
 
-    return unravel_params_fn(updates), old_updates, info
+    return unravel_params_fn(updates), old_updates, v, prev_updates, info
 
 
 sr = partial(_sr_srt_common, use_ntk=False)

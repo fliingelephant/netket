@@ -26,6 +26,7 @@ from netket.jax import _ntk as nt
         "solver_fn",
         "chunk_size",
         "mode",
+        "moment_adaptive",
     ),
 )
 def srt_onthefly(
@@ -41,6 +42,10 @@ def srt_onthefly(
     proj_reg: float | Array | None = None,
     momentum: float | Array | None = None,
     old_updates: Array | None = None,
+    moment_adaptive: bool = False,
+    beta: float | Array = 0.995,
+    v: Array | None = None,
+    prev_updates: Array | None = None,
     chunk_size: int | None = None,
     weights: Array | None = None,
 ):
@@ -77,6 +82,30 @@ def srt_onthefly(
         _, acc = jax.jvp(f, (parameters,), (vector,))
         return acc
 
+    # MARCH (Gu et al. 2025, Eq. S17-S23): reparameterize via column-scaling
+    #   θ̃ = D^(1/4) θ,  d/dθ̃ log ψ = J D^(-1/4) = U
+    # We wrap _apply_fn so that differentiating wrt the scaled parameters gives U.
+    # The linearization point is params_s_in = D^(1/4) params_real (same log ψ value).
+    if moment_adaptive:
+        if v is None:
+            v = tree_map(jnp.ones_like, parameters_real)
+        if prev_updates is None:
+            prev_updates = tree_map(jnp.zeros_like, parameters_real)
+        v_quart_inv = tree_map(
+            lambda vv: jnp.power(vv, -0.25).astype(vv.dtype), v
+        )
+
+        def _apply_fn_scaled(params_s, samples, model_state):
+            params_r = tree_map(lambda ps, vq: ps * vq, params_s, v_quart_inv)
+            return _apply_fn(params_r, samples, model_state)
+
+        # Linearization point θ̃ = D^(1/4) θ = θ / v_quart_inv.
+        params_s_in = tree_map(lambda p, vq: p / vq, parameters_real, v_quart_inv)
+    else:
+        v_quart_inv = None
+        _apply_fn_scaled = _apply_fn
+        params_s_in = parameters_real
+
     # compute rhs of the linear system
     local_energies = local_energies.flatten()
     de = local_energies - jnp.mean(local_energies)
@@ -89,6 +118,8 @@ def srt_onthefly(
     else:
         dv = jnp.real(dv)  # shape [N_mc,]
 
+    # Momentum step (SPRING): ζ = dv - Õ φ, with φ = μ old_updates in raw coords.
+    # Uses UNSCALED _apply_fn and parameters_real so the JVP is Õ @ old_updates.
     if momentum is not None:
         if old_updates is None:
             old_updates = tree_map(jnp.zeros_like, parameters_real)
@@ -114,26 +145,27 @@ def srt_onthefly(
             samples, NamedSharding(jax.sharding.get_abstract_mesh(), P())
         )
 
+    # NTK built from the SCALED apply (if moment_adaptive). This gives U U^T.
     _jacobian_contraction = nt.empirical_ntk_by_jacobian(
-        f=_apply_fn,
+        f=_apply_fn_scaled,
         trace_axes=(),
         vmap_axes=0,
     )
 
-    def jacobian_contraction(samples, all_samples, parameters_real, model_state):
+    def jacobian_contraction(samples, all_samples, params_s, model_state):
         if config.netket_experimental_sharding:
-            parameters_real = nkjax.lax.pcast(parameters_real, "S", to="varying")
+            params_s = nkjax.lax.pcast(params_s, "S", to="varying")
         if chunk_size is None:
             # STRUCTURED_DERIVATIVES returns a complex array, but the imaginary part is zero
             # shape [N_mc/p.size, N_mc, 2, 2]
             return _jacobian_contraction(
-                samples, all_samples, parameters_real, model_state=model_state
+                samples, all_samples, params_s, model_state=model_state
             ).real
         else:
             _all_samples, _ = nkjax.chunk(all_samples, chunk_size=chunk_size)
             ntk_local = jax.lax.map(
                 lambda batch_lattice: _jacobian_contraction(
-                    samples, batch_lattice, parameters_real, model_state=model_state
+                    samples, batch_lattice, params_s, model_state=model_state
                 ).real,
                 _all_samples,
             )
@@ -164,7 +196,7 @@ def srt_onthefly(
     # in the apply function inside.
     with nkjax.sharding._increase_SHARD_MAP_STACK_LEVEL():
         ntk_local = jacobian_contraction(
-            samples, all_samples, parameters_real, model_state
+            samples, all_samples, params_s_in, model_state
         ).real
 
     # shape [N_mc, N_mc, 2, 2] or [N_mc, N_mc]
@@ -249,10 +281,10 @@ def srt_onthefly(
             ),
         )
 
-    # _, vjp_fun = jax.vjp(f, parameters_real)
+    # VJP against the SCALED apply → updates_scaled = U^T aus_vector  (scaled coords)
     vjp_fun = nkjax.vjp_chunked(
-        _apply_fn,
-        parameters_real,
+        _apply_fn_scaled,
+        params_s_in,
         samples,
         model_state,
         chunk_size=chunk_size,
@@ -260,10 +292,30 @@ def srt_onthefly(
         nondiff_argnums=(1, 2),
     )
 
-    (updates,) = vjp_fun(aus_vector)  # pytree [N_params,]
+    (updates_scaled,) = vjp_fun(aus_vector)  # pytree [N_params,] in scaled coords
 
+    # Unscale: dθ_part = D^(-1/4) · updates_scaled  (paper Eq. S23's D^(-1/2) Õ^T aus part)
+    if moment_adaptive:
+        updates = tree_map(
+            lambda u, vq: u * vq.astype(u.dtype), updates_scaled, v_quart_inv
+        )
+    else:
+        updates = updates_scaled
+
+    # Add momentum: dθ = dθ_part + φ
     if momentum is not None:
         updates = tree_map(lambda x, y: x + momentum * y, updates, old_updates)
         old_updates = updates
 
-    return rss(updates), old_updates, info
+    # MARCH second-moment EMA: v_k = β v_{k-1} + (dθ_k - dθ_{k-1})²  (pytree-wise)
+    if moment_adaptive:
+        diff = tree_map(lambda u, pu: u - pu, updates, prev_updates)
+        new_v = tree_map(
+            lambda vv, d: beta * vv + (d * d).astype(vv.dtype), v, diff
+        )
+        new_prev_updates = updates
+    else:
+        new_v = v
+        new_prev_updates = prev_updates
+
+    return rss(updates), old_updates, new_v, new_prev_updates, info

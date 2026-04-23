@@ -321,20 +321,22 @@ class Infidelity_SR(AbstractOptimizationDriver):
             else:
                 compute_sr_update_fun = sr
 
-        self._dp, self._old_updates, self.info = compute_sr_update_fun(
-            self.state._apply_fun,
-            local_energies,
-            self.state.parameters,
-            self.state.model_state,
-            samples,
-            diag_shift=diag_shift,
-            solver_fn=self._linear_solver,
-            mode=self.mode,
-            proj_reg=proj_reg,
-            momentum=momentum,
-            old_updates=self._old_updates,
-            chunk_size=self.chunk_size_bwd,
-            weights=weights,
+        self._dp, self._old_updates, _v, _prev_updates, self.info = (
+            compute_sr_update_fun(
+                self.state._apply_fun,
+                local_energies,
+                self.state.parameters,
+                self.state.model_state,
+                samples,
+                diag_shift=diag_shift,
+                solver_fn=self._linear_solver,
+                mode=self.mode,
+                proj_reg=proj_reg,
+                momentum=momentum,
+                old_updates=self._old_updates,
+                chunk_size=self.chunk_size_bwd,
+                weights=weights,
+            )
         )
 
         self._dp = jax.tree_util.tree_map(lambda x: -x, self._dp)

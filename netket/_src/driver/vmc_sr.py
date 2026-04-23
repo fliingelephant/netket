@@ -224,6 +224,23 @@ class VMC_SR(AbstractOptimizationDriver):
     no significant performance penalty.
     """
 
+    moment_adaptive: bool = struct.field(pytree_node=False, serialize=False, default=False)
+    r"""
+    Flag enabling MARCH (Moment-Adaptive ReConfiguration Heuristic) from
+    `Y.Gu et al. (2025) <https://arxiv.org/abs/2507.02644>`_.
+
+    When `True`, the SR ridge is reweighted per-parameter by an EMA of squared
+    iterate differences :math:`v_k = \beta v_{k-1} + (d\theta_k - d\theta_{k-1})^2`,
+    equivalent to SPRING on reparameterized coordinates :math:`\tilde\theta = v^{1/4} \odot \theta`.
+    Orthogonal to ``momentum``: all four combinations are valid.
+    """
+
+    beta: ScalarOrSchedule = struct.field(serialize=False, default=0.995)
+    r"""
+    EMA decay for the MARCH second-moment estimator. Ignored if
+    ``moment_adaptive=False``. Paper default (Table S7): 0.995.
+    """
+
     _ham: AbstractOperator = struct.field(pytree_node=False, serialize=False)
 
     _mode: str = struct.field(serialize=False)
@@ -247,6 +264,8 @@ class VMC_SR(AbstractOptimizationDriver):
 
     # Serialized state
     _old_updates: PyTree = None
+    _v: PyTree = None
+    _prev_updates: PyTree = None
     info: Any | None = None
     """
     PyTree to pass on information from the solver,e.g, the quadratic model.
@@ -260,6 +279,8 @@ class VMC_SR(AbstractOptimizationDriver):
         diag_shift: ScalarOrSchedule,
         proj_reg: ScalarOrSchedule | None = None,
         momentum: ScalarOrSchedule | None = None,
+        moment_adaptive: bool = False,
+        beta: ScalarOrSchedule = 0.995,
         linear_solver: Callable[[Array, Array], Array] = cholesky_with_fallback,
         linear_solver_fn: (
             Callable[[Array, Array], Array] | DeprecatedArg
@@ -295,6 +316,14 @@ class VMC_SR(AbstractOptimizationDriver):
                 Thus the  amplification is at most a factor of :math:`A(0.9)=2.3` or
                 :math:`A(0.99)=7.1`. Values around ``momentum = 0.8`` empirically work well.
                 (Defaults to None)
+            moment_adaptive: (MARCH, disabled by default) flag enabling the Moment-Adaptive
+                ReConfiguration Heuristic from `Y.Gu et al. (2025) <https://arxiv.org/abs/2507.02644>`_.
+                Rescales the SR ridge per-parameter using an EMA of squared iterate differences.
+                Orthogonal to ``momentum``: any of the four combinations is valid.
+                (Defaults to False)
+            beta: EMA decay for the MARCH second-moment estimator :math:`v_k = \beta v_{k-1} +
+                (d\theta_k - d\theta_{k-1})^2`. Ignored when ``moment_adaptive=False``.
+                Paper default (Table S7): 0.995.
             linear_solver: The linear solver function to use for the NGD solver. Defaults to
                 :func:`netket.optimizer.solver.cholesky_with_fallback`, which runs a Cholesky
                 factorisation and automatically falls back to :func:`~netket.optimizer.solver.pinv_smooth`
@@ -397,6 +426,8 @@ class VMC_SR(AbstractOptimizationDriver):
         self.diag_shift = diag_shift
         self.proj_reg = proj_reg
         self.momentum = momentum
+        self.moment_adaptive = moment_adaptive
+        self.beta = beta
 
         self.chunk_size_bwd = chunk_size_bwd
         self._use_ntk = use_ntk
@@ -409,6 +440,8 @@ class VMC_SR(AbstractOptimizationDriver):
         self._unravel_params_fn = jax.jit(unravel_params_fn)
 
         self._old_updates: PyTree = None
+        self._v: PyTree = None
+        self._prev_updates: PyTree = None
 
         # PyTree to pass on information from the solver, e.g, the quadratic model
         self.info = None
@@ -471,12 +504,15 @@ class VMC_SR(AbstractOptimizationDriver):
         diag_shift = self.diag_shift
         proj_reg = self.proj_reg
         momentum = self.momentum
+        beta = self.beta
         if callable(diag_shift):
             diag_shift = diag_shift(self.step_count)
         if callable(proj_reg):
             proj_reg = proj_reg(self.step_count)
         if callable(momentum):
             momentum = momentum(self.step_count)
+        if callable(beta):
+            beta = beta(self.step_count)
 
         if self.use_ntk:
             if self.on_the_fly:
@@ -491,20 +527,26 @@ class VMC_SR(AbstractOptimizationDriver):
 
         samples, pdf = get_samples_and_pdf(self.state)
 
-        self._dp, self._old_updates, self.info = compute_sr_update_fun(
-            self.state._apply_fun,
-            local_energies,
-            self.state.parameters,
-            self.state.model_state,
-            samples,
-            diag_shift=diag_shift,
-            solver_fn=self._linear_solver,
-            mode=self.mode,
-            proj_reg=proj_reg,
-            momentum=momentum,
-            old_updates=self._old_updates,
-            chunk_size=self.chunk_size_bwd,
-            weights=pdf,
+        self._dp, self._old_updates, self._v, self._prev_updates, self.info = (
+            compute_sr_update_fun(
+                self.state._apply_fun,
+                local_energies,
+                self.state.parameters,
+                self.state.model_state,
+                samples,
+                diag_shift=diag_shift,
+                solver_fn=self._linear_solver,
+                mode=self.mode,
+                proj_reg=proj_reg,
+                momentum=momentum,
+                old_updates=self._old_updates,
+                moment_adaptive=self.moment_adaptive,
+                beta=beta,
+                v=self._v,
+                prev_updates=self._prev_updates,
+                chunk_size=self.chunk_size_bwd,
+                weights=pdf,
+            )
         )
 
         return self._loss_stats, self._dp
