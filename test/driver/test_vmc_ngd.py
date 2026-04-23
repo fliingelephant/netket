@@ -238,7 +238,11 @@ def test_SRt_vs_SR(model, onthefly, momentum, moment_adaptive):
 
 @skipif_distributed
 @pytest.mark.parametrize("onthefly", onthefly_vals)
-def test_SRt_real_vs_complex(onthefly):
+@pytest.mark.parametrize(
+    "moment_adaptive",
+    [pytest.param(False, id=""), pytest.param(True, id="march")],
+)
+def test_SRt_real_vs_complex(onthefly, moment_adaptive):
     """s
     nk.driver.VMC_kernelSR must give **exactly** the same dynamics for a positive definite wave function if jacobian_mode=complex or real
     """
@@ -250,9 +254,7 @@ def test_SRt_real_vs_complex(onthefly):
         opt,
         variational_state=vstate_complex,
         diag_shift=0.1,
-        # jacobian_mode="complex",
-        # proj_reg=0.5,
-        # momentum=0.0,
+        moment_adaptive=moment_adaptive,
         use_ntk=True,
         on_the_fly=onthefly,
         mode="complex",
@@ -266,9 +268,7 @@ def test_SRt_real_vs_complex(onthefly):
         opt,
         variational_state=vstate_real,
         diag_shift=0.1,
-        # jacobian_mode="real",
-        # proj_reg=0.5,
-        # momentum=0.0,
+        moment_adaptive=moment_adaptive,
         use_ntk=True,
         on_the_fly=onthefly,
         mode="real",
@@ -411,9 +411,13 @@ def test_srt_vs_ntk(model, momentum, moment_adaptive):
 @pytest.mark.parametrize(
     "momentum", [pytest.param(None, id=""), pytest.param(0.9, id="momentum")]
 )
+@pytest.mark.parametrize(
+    "moment_adaptive",
+    [pytest.param(False, id=""), pytest.param(True, id="march")],
+)
 @pytest.mark.parametrize("model", machines)
 @pytest.mark.parametrize("use_ntk, onthefly", ntk_onthefly_vals)
-def test_SRt_chunked(use_ntk, onthefly, model, momentum, proj_reg):
+def test_SRt_chunked(use_ntk, onthefly, model, momentum, proj_reg, moment_adaptive):
     """
     nk.driver.VMC_kernelSR must give **exactly** the same dynamics with and without chunking
     """
@@ -433,6 +437,7 @@ def test_SRt_chunked(use_ntk, onthefly, model, momentum, proj_reg):
         diag_shift=diag_shift,
         proj_reg=proj_reg,
         momentum=momentum,
+        moment_adaptive=moment_adaptive,
         use_ntk=use_ntk,
         on_the_fly=onthefly,
     )
@@ -447,6 +452,7 @@ def test_SRt_chunked(use_ntk, onthefly, model, momentum, proj_reg):
         diag_shift=diag_shift,
         proj_reg=proj_reg,
         momentum=momentum,
+        moment_adaptive=moment_adaptive,
         use_ntk=use_ntk,
         on_the_fly=onthefly,
     )
