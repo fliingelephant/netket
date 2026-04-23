@@ -19,6 +19,9 @@
 * Exposed new public driver base classes {class}`netket.driver.AbstractDriver`, {class}`netket.driver.AbstractOptimizationDriver`, and {class}`netket.driver.AbstractDynamicsDriver`.
   This is an experiment for now, and the API may still evolve.
 * {class}`netket.driver.VMC_SR` with `on_the_fly=True` in NTK mode has been significantly improved to reduce GPU memory consumption and to support distributed solvers [PR #2199](https://github.com/netket/netket/pull/2199).
+* {class}`netket.driver.VMC_SR` now supports the **MARCH** (Moment-Adaptive ReConfiguration Heuristic) optimizer from [Gu et al. 2025](https://arxiv.org/abs/2507.02644) via new kwargs `moment_adaptive: bool` and `beta: ScalarOrSchedule`.
+  MARCH reweights the SR ridge per-parameter by an EMA of squared iterate differences $v_k = \beta v_{k-1} + (d\theta_k - d\theta_{k-1})^2$, equivalent to SPRING on reparameterized coordinates $\tilde\theta = v^{1/4} \odot \theta$.
+  Orthogonal to `momentum`: all four combinations of (SPRING, MARCH) are valid. Supported across all three solve paths (SR dense QGT, SRT dense NTK, SRT on-the-fly NTK).
 
 #### Operators
 * Added {class}`netket.operator.EmbedOperator`, which embeds an operator acting on a subspace into a larger {class}`~netket.hilbert.TensorHilbert` space.

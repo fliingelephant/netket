@@ -188,9 +188,7 @@ def _sr_srt_common(
 
     compute_update = _compute_srt_update if use_ntk else _compute_sr_update
 
-    # TODO: Add support for proj_reg and momentum
-    # At the moment SR does not support momentum, proj_reg.
-    # We raise an error if they are passed with a value different from None.
+    # SR path still rejects proj_reg (validated inside _compute_sr_update).
     updates, old_updates, v, prev_updates, info = compute_update(
         O_L,
         dv,
