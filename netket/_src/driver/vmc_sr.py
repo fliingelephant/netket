@@ -468,6 +468,16 @@ class VMC_SR(AbstractOptimizationDriver):
                 f"decay={decay:.3f}"
             )
 
+    def _compute_local_energies(self):
+        """Hook returning the per-sample local estimator array for MC states.
+
+        Subclasses may override this to transform the local energies
+        (e.g. FermiNet-style clipping) before they enter the SR/MARCH solve.
+        Only called on the MC path; :class:`FullSumState` uses an exact
+        operator contraction instead.
+        """
+        return self.state.local_estimators(self._ham)
+
     @timing.timed
     def compute_loss_and_update(self):
         # Compute the local energy estimator and average Energy
@@ -486,7 +496,7 @@ class VMC_SR(AbstractOptimizationDriver):
                 mean=expval_O, error_of_mean=0.0, variance=variance
             )
         else:
-            local_energies = self.state.local_estimators(self._ham)
+            local_energies = self._compute_local_energies()
             self._loss_stats = nkstats.statistics(local_energies)
 
             # Experimental: compute some single-pass diagnostics by averaging
